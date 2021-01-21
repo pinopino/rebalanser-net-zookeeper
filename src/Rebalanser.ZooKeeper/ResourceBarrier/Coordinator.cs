@@ -1,3 +1,7 @@
+using org.apache.zookeeper;
+using Rebalanser.Core.Logging;
+using Rebalanser.ZooKeeper.ResourceManagement;
+using Rebalanser.ZooKeeper.Zk;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -5,28 +9,23 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using org.apache.zookeeper;
-using Rebalanser.Core;
-using Rebalanser.Core.Logging;
-using Rebalanser.ZooKeeper.ResourceManagement;
-using Rebalanser.ZooKeeper.Zk;
 
 namespace Rebalanser.ZooKeeper.ResourceBarrier
 {
     public class Coordinator : Watcher, ICoordinator
     {
         // services
-        private IZooKeeperService zooKeeperService;
+        private ZooKeeperService zooKeeperService;
         private ILogger logger;
         private ResourceManager store;
-        
+
         // immutable state
         private readonly CancellationToken coordinatorToken;
         private readonly string clientId;
         private readonly TimeSpan minimumRebalancingInterval;
         private readonly TimeSpan sessionTimeout;
         private readonly TimeSpan onStartDelay;
-        
+
         // mutable state
         private Task rebalancingTask;
         private CancellationTokenSource rebalancingCts;
@@ -36,7 +35,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
         private RebalancingResult? lastRebalancingResult;
         private Stopwatch disconnectedTimer;
 
-        public Coordinator(IZooKeeperService zooKeeperService,
+        public Coordinator(ZooKeeperService zooKeeperService,
             ILogger logger,
             ResourceManager store,
             string clientId,
@@ -53,21 +52,21 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
             this.sessionTimeout = sessionTimeout;
             this.onStartDelay = onStartDelay;
             this.coordinatorToken = coordinatorToken;
-            
+
             this.rebalancingCts = new CancellationTokenSource();
             this.events = new BlockingCollection<CoordinatorEvent>();
             this.disconnectedTimer = new Stopwatch();
         }
-        
+
         // very important that this method does not throw any exceptions as it is called from the zookeeper library
         public override async Task process(WatchedEvent @event)
         {
             if (this.coordinatorToken.IsCancellationRequested || this.ignoreWatches)
                 return;
-            
-            if(@event.getPath() != null)
+
+            if (@event.getPath() != null)
                 this.logger.Info(this.clientId, $"Coordinator - KEEPER EVENT {@event.getState()} - {@event.get_Type()} - {@event.getPath()}");
-            else 
+            else
                 this.logger.Info(this.clientId, $"Coordinator - KEEPER EVENT {@event.getState()} - {@event.get_Type()}");
 
             switch (@event.getState())
@@ -76,17 +75,17 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                     this.events.Add(CoordinatorEvent.SessionExpired);
                     break;
                 case Event.KeeperState.Disconnected:
-                    if(!this.disconnectedTimer.IsRunning)
+                    if (!this.disconnectedTimer.IsRunning)
                         this.disconnectedTimer.Start();
                     break;
                 case Event.KeeperState.ConnectedReadOnly:
                 case Event.KeeperState.SyncConnected:
-                    if(this.disconnectedTimer.IsRunning)
+                    if (this.disconnectedTimer.IsRunning)
                         this.disconnectedTimer.Reset();
-                    
+
                     if (@event.getPath() != null)
                     {
-                        if(@event.get_Type() == Event.EventType.NodeDataChanged)
+                        if (@event.get_Type() == Event.EventType.NodeDataChanged)
                         {
                             if (@event.getPath().EndsWith("epoch"))
                                 this.events.Add(CoordinatorEvent.NoLongerCoordinator);
@@ -110,7 +109,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
 
             await Task.Yield();
         }
-        
+
         public async Task<BecomeCoordinatorResult> BecomeCoordinatorAsync(int currentEpoch)
         {
             try
@@ -140,7 +139,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
         public async Task<CoordinatorExitReason> StartEventLoopAsync()
         {
             var rebalanceTimer = new Stopwatch();
-            
+
             while (!this.coordinatorToken.IsCancellationRequested)
             {
                 if (this.disconnectedTimer.IsRunning && this.disconnectedTimer.Elapsed > this.sessionTimeout)
@@ -149,7 +148,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                     await CleanUpAsync();
                     return CoordinatorExitReason.SessionExpired;
                 }
-                
+
                 CoordinatorEvent coordinatorEvent;
                 if (this.events.TryTake(out coordinatorEvent))
                 {
@@ -159,19 +158,19 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                             this.zooKeeperService.SessionExpired();
                             await CleanUpAsync();
                             return CoordinatorExitReason.SessionExpired;
-                        
+
                         case CoordinatorEvent.NoLongerCoordinator:
                             await CleanUpAsync();
                             return CoordinatorExitReason.NoLongerCoordinator;
-                        
+
                         case CoordinatorEvent.PotentialInconsistentState:
                             await CleanUpAsync();
                             return CoordinatorExitReason.PotentialInconsistentState;
-                        
+
                         case CoordinatorEvent.FatalError:
                             await CleanUpAsync();
                             return CoordinatorExitReason.FatalError;
-                        
+
                         case CoordinatorEvent.RebalancingTriggered:
                             if (this.events.Any())
                             {
@@ -190,7 +189,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                             else
                             {
                                 // if enough time has not passed since the last rebalancing just readd it
-                                this.events.Add(CoordinatorEvent.RebalancingTriggered);   
+                                this.events.Add(CoordinatorEvent.RebalancingTriggered);
                             }
                             break;
                         default:
@@ -211,7 +210,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
 
             return CoordinatorExitReason.PotentialInconsistentState; // if this happens then we have a correctness bug
         }
-        
+
         private async Task CleanUpAsync()
         {
             try
@@ -251,9 +250,9 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 await Task.Delay(waitPeriod, this.coordinatorToken);
             }
             catch (TaskCanceledException)
-            {}
+            { }
         }
-        
+
         private async Task WaitFor(TimeSpan waitPeriod, CancellationToken rebalancingToken)
         {
             try
@@ -261,9 +260,9 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 await Task.Delay(waitPeriod, rebalancingToken);
             }
             catch (TaskCanceledException)
-            {}
+            { }
         }
-        
+
         private async Task TriggerRebalancing(CancellationToken rebalancingToken)
         {
             try
@@ -339,15 +338,15 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
         {
             var sw = new Stopwatch();
             sw.Start();
-            
+
             logger.Info(this.clientId, "Coordinator - Get clients and resources list");
             var clients = await this.zooKeeperService.GetActiveClientsAsync();
             var resources = await this.zooKeeperService.GetResourcesAsync(null, null);
-            
+
             if (resources.Version != this.resourcesVersion)
                 throw new ZkStaleVersionException("Resources znode version does not match expected value, indicates another client has been made coordinator and is executing a rebalancing.");
 
-            if (rebalancingToken.IsCancellationRequested) 
+            if (rebalancingToken.IsCancellationRequested)
                 return RebalancingResult.Cancelled;
 
             // if no resources were changed and there are more clients than resources then check
@@ -358,7 +357,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 this.logger.Info(this.clientId, "Coordinator - No rebalancing required. No resource change. No change to existing clients. More clients than resources.");
                 return RebalancingResult.Complete;
             }
-            
+
             logger.Info(this.clientId, $"Coordinator - Assign resources ({string.Join(",", resources.Resources)}) to clients ({string.Join(",", clients.ClientPaths.Select(GetClientId))})");
             var resourcesToAssign = new Queue<string>(resources.Resources);
             var resourceAssignments = new List<ResourceAssignment>();
@@ -375,35 +374,35 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 if (clientIndex >= clients.ClientPaths.Count)
                     clientIndex = 0;
             }
-            
+
             // write assignments back to resources znode
             resources.ResourceAssignments.Assignments = resourceAssignments;
             this.resourcesVersion = await this.zooKeeperService.SetResourcesAsync(resources);
-            
-            if (rebalancingToken.IsCancellationRequested) 
+
+            if (rebalancingToken.IsCancellationRequested)
                 return RebalancingResult.Cancelled;
 
             await this.store.InvokeOnStopActionsAsync(this.clientId, "Coordinator");
-            if (rebalancingToken.IsCancellationRequested) 
+            if (rebalancingToken.IsCancellationRequested)
                 return RebalancingResult.Cancelled;
-            
+
             if (this.onStartDelay.Ticks > 0)
             {
                 this.logger.Info(this.clientId, $"Coordinator - Delaying on start for {(int)this.onStartDelay.TotalMilliseconds}ms");
                 await WaitFor(this.onStartDelay, rebalancingToken);
             }
-            
-            if (rebalancingToken.IsCancellationRequested) 
+
+            if (rebalancingToken.IsCancellationRequested)
                 return RebalancingResult.Cancelled;
-            
+
             var leaderAssignments = resourceAssignments
                     .Where(x => x.ClientId == this.clientId)
                     .Select(x => x.Resource)
                     .ToList();
             await this.store.InvokeOnStartActionsAsync(this.clientId, "Coordinator", leaderAssignments, rebalancingToken, this.coordinatorToken);
-            if (rebalancingToken.IsCancellationRequested) 
+            if (rebalancingToken.IsCancellationRequested)
                 return RebalancingResult.Cancelled;
-            
+
             return RebalancingResult.Complete;
         }
 
@@ -412,25 +411,25 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
             // if this is the first rebalancing as coordinator or the last one was not successful then rebalancing is required
             if (this.store.GetAssignmentStatus() == AssignmentStatus.NoAssignmentYet || !lastRebalancingResult.HasValue || lastRebalancingResult.Value != RebalancingResult.Complete)
                 return true;
-            
+
             // any change to resources requires a rebalancing
             if (resources.HasResourceChange())
                 return true;
 
             // given a client was either added or removed
-            
+
             // if there are less clients than resources then we require a rebalancing
             if (clients.ClientPaths.Count < resources.Resources.Count)
                 return true;
-            
+
             // given we have an equal or greater number clients than resources
-            
+
             // if an existing client is currently assigned more than one resource we require a rebalancing
             if (resources.ResourceAssignments.Assignments.GroupBy(x => x.ClientId).Any(x => x.Count() > 1))
                 return true;
-            
+
             // given all existing assignments are one client to one resource
-            
+
             // if any client for the existing assignments is no longer around then we require a rebalancing
             var clientIds = clients.ClientPaths.Select(GetClientId).ToList();
             foreach (var assignment in resources.ResourceAssignments.Assignments)
@@ -445,7 +444,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
 
         private string GetClientId(string clientPath)
         {
-            return clientPath.Substring(clientPath.LastIndexOf("/", StringComparison.Ordinal)+1);
+            return clientPath.Substring(clientPath.LastIndexOf("/", StringComparison.Ordinal) + 1);
         }
     }
 }

@@ -1,33 +1,30 @@
+using org.apache.zookeeper;
+using Rebalanser.Core.Logging;
+using Rebalanser.ZooKeeper.ResourceManagement;
+using Rebalanser.ZooKeeper.Zk;
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using org.apache.zookeeper;
-using Rebalanser.Core;
-using Rebalanser.Core.Logging;
-using Rebalanser.ZooKeeper.GlobalBarrier;
-using Rebalanser.ZooKeeper.ResourceManagement;
-using Rebalanser.ZooKeeper.Zk;
 
 namespace Rebalanser.ZooKeeper.ResourceBarrier
 {
     public class Follower : Watcher, IFollower
     {
         // services
-        private IZooKeeperService zooKeeperService;
+        private ZooKeeperService zooKeeperService;
         private ILogger logger;
         private ResourceManager store;
-        
+
         // immutable state
         private readonly string clientId;
         private readonly int clientNumber;
         private CancellationToken followerToken;
         private readonly TimeSpan sessionTimeout;
         private readonly TimeSpan onStartDelay;
-        
+
         // mutable state
         private string watchSiblingPath;
         private string siblingId;
@@ -36,8 +33,8 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
         private BlockingCollection<FollowerEvent> events;
         private bool ignoreWatches;
         private Stopwatch disconnectedTimer;
-        
-        public Follower(IZooKeeperService zooKeeperService,
+
+        public Follower(ZooKeeperService zooKeeperService,
             ILogger logger,
             ResourceManager store,
             string clientId,
@@ -57,7 +54,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
             this.sessionTimeout = sessionTimeout;
             this.onStartDelay = onStartDelay;
             this.followerToken = followerToken;
-            
+
             this.rebalancingCts = new CancellationTokenSource();
             this.events = new BlockingCollection<FollowerEvent>();
             this.disconnectedTimer = new Stopwatch();
@@ -87,33 +84,33 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
 
             return BecomeFollowerResult.Ok;
         }
-        
-        
+
+
         // Important that nothing throws an exception in this method as it is called from the zookeeper library
         public override async Task process(WatchedEvent @event)
         {
             if (this.followerToken.IsCancellationRequested || this.ignoreWatches)
                 return;
-                
-            if(@event.getPath() != null)
+
+            if (@event.getPath() != null)
                 this.logger.Info(this.clientId, $"Follower - KEEPER EVENT {@event.getState()} - {@event.get_Type()} - {@event.getPath()}");
-            else 
+            else
                 this.logger.Info(this.clientId, $"Follower - KEEPER EVENT {@event.getState()} - {@event.get_Type()}");
-            
+
             switch (@event.getState())
             {
                 case Event.KeeperState.Expired:
                     this.events.Add(FollowerEvent.SessionExpired);
                     break;
                 case Event.KeeperState.Disconnected:
-                    if(!this.disconnectedTimer.IsRunning)
+                    if (!this.disconnectedTimer.IsRunning)
                         this.disconnectedTimer.Start();
                     break;
                 case Event.KeeperState.ConnectedReadOnly:
                 case Event.KeeperState.SyncConnected:
-                    if(this.disconnectedTimer.IsRunning)
+                    if (this.disconnectedTimer.IsRunning)
                         this.disconnectedTimer.Reset();
-                    
+
                     if (@event.get_Type() == Event.EventType.NodeDeleted)
                     {
                         if (@event.getPath().EndsWith(this.siblingId))
@@ -140,13 +137,13 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                     break;
             }
         }
-        
+
         public async Task<FollowerExitReason> StartEventLoopAsync()
         {
             // it is possible that rebalancing has been triggered already, so check 
             // if any resources have been assigned already and if so, add a RebalancingTriggered event
             await CheckForRebalancingAsync();
-            
+
             while (!this.followerToken.IsCancellationRequested)
             {
                 if (this.disconnectedTimer.IsRunning && this.disconnectedTimer.Elapsed > this.sessionTimeout)
@@ -155,7 +152,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                     await CleanUpAsync();
                     return FollowerExitReason.SessionExpired;
                 }
-                
+
                 FollowerEvent followerEvent;
                 if (this.events.TryTake(out followerEvent))
                 {
@@ -173,7 +170,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                         case FollowerEvent.PotentialInconsistentState:
                             await CleanUpAsync();
                             return FollowerExitReason.PotentialInconsistentState;
-                        
+
                         case FollowerEvent.FatalError:
                             await CleanUpAsync();
                             return FollowerExitReason.FatalError;
@@ -194,7 +191,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                             }
 
                             break;
-                        
+
                         default:
                             await CleanUpAsync();
                             return FollowerExitReason.PotentialInconsistentState;
@@ -235,11 +232,11 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 .Where(x => x.ClientId.Equals(this.clientId))
                 .Select(x => x.Resource)
                 .ToList();
-            
-            if(assignedResources.Any())
+
+            if (assignedResources.Any())
                 this.events.Add(FollowerEvent.RebalancingTriggered);
         }
-        
+
         private async Task RespondToRebalancing(CancellationToken rebalancingToken)
         {
             try
@@ -291,7 +288,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
         private async Task<RebalancingResult> ProcessStatusChangeAsync(CancellationToken rebalancingToken)
         {
             await this.store.InvokeOnStopActionsAsync(this.clientId, "Follower");
-            
+
             var resources = await this.zooKeeperService.GetResourcesAsync(null, null);
             var assignedResources = resources.ResourceAssignments.Assignments
                 .Where(x => x.ClientId.Equals(this.clientId))
@@ -306,12 +303,12 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
 
             if (rebalancingToken.IsCancellationRequested)
                 return RebalancingResult.Cancelled;
-            
+
             await this.store.InvokeOnStartActionsAsync(this.clientId, "Follower", assignedResources, rebalancingToken, this.followerToken);
-            
+
             return RebalancingResult.Complete;
         }
-       
+
         private async Task CleanUpAsync()
         {
             try
@@ -324,7 +321,7 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 await this.store.InvokeOnStopActionsAsync(this.clientId, "Follower");
             }
         }
-        
+
         private async Task CancelRebalancingIfInProgressAsync()
         {
             if (this.rebalancingTask != null && !this.rebalancingTask.IsCompleted)
@@ -351,9 +348,9 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 await Task.Delay(waitPeriod, this.followerToken);
             }
             catch (TaskCanceledException)
-            {}
+            { }
         }
-        
+
         private async Task WaitFor(TimeSpan waitPeriod, CancellationToken rebalancingToken)
         {
             try
@@ -361,9 +358,9 @@ namespace Rebalanser.ZooKeeper.ResourceBarrier
                 await Task.Delay(waitPeriod, rebalancingToken);
             }
             catch (TaskCanceledException)
-            {}
+            { }
         }
-        
+
         private async Task PerformLeaderCheckAsync()
         {
             bool checkComplete = false;

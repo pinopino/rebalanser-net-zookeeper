@@ -1,9 +1,9 @@
+using Rebalanser.Core;
+using Rebalanser.Core.Logging;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Rebalanser.Core;
-using Rebalanser.Core.Logging;
 
 namespace Rebalanser.ZooKeeper.Tests.RandomisedTests.TestComponents
 {
@@ -22,9 +22,9 @@ namespace Rebalanser.ZooKeeper.Tests.RandomisedTests.TestComponents
         private TimeSpan onStopTime;
         private bool randomiseTimes;
         private Random rand;
-        
+
         public TestClient(ResourceMonitor resourceMonitor,
-            string resourceGroup, 
+            string resourceGroup,
             ClientOptions clientOptions,
             TimeSpan onStartTime,
             TimeSpan onStopTime,
@@ -41,9 +41,14 @@ namespace Rebalanser.ZooKeeper.Tests.RandomisedTests.TestComponents
             this.rand = new Random(Guid.NewGuid().GetHashCode());
         }
 
-        public async Task StartAsync(ILogger logger)
+        public async Task StartAsync(string zookeeperHosts,
+            string zooKeeperRootPath,
+            TimeSpan sessionTimeout,
+            TimeSpan connectTimeout,
+            TimeSpan minRebalancingInterval,
+            ILogger logger)
         {
-            CreateNewClient(logger);
+            CreateNewClient(zookeeperHosts, zooKeeperRootPath, sessionTimeout, connectTimeout, minRebalancingInterval, logger);
             await Client.StartAsync(ResourceGroup, ClientOptions);
             Started = true;
         }
@@ -54,7 +59,12 @@ namespace Rebalanser.ZooKeeper.Tests.RandomisedTests.TestComponents
             Started = false;
         }
 
-        public async Task PerformActionAsync(ILogger logger)
+        public async Task PerformActionAsync(string zookeeperHosts,
+            string zooKeeperRootPath,
+            TimeSpan sessionTimeout,
+            TimeSpan connectTimeout,
+            TimeSpan minRebalancingInterval,
+            ILogger logger)
         {
             if (Started)
             {
@@ -66,21 +76,31 @@ namespace Rebalanser.ZooKeeper.Tests.RandomisedTests.TestComponents
             else
             {
                 logger.Info("TEST RUNNER", "Starting client");
-                await StartAsync(logger);
+                await StartAsync(zookeeperHosts,
+                    zooKeeperRootPath,
+                    sessionTimeout,
+                    connectTimeout,
+                    minRebalancingInterval,
+                    logger);
                 logger.Info("TEST RUNNER", "Started client");
             }
         }
 
-        private void CreateNewClient(ILogger logger)
+        private void CreateNewClient(string zookeeperHosts,
+            string zooKeeperRootPath,
+            TimeSpan sessionTimeout,
+            TimeSpan connectTimeout,
+            TimeSpan minRebalancingInterval,
+            ILogger logger)
         {
             Id = $"Client{ClientNumber}";
             ClientNumber++;
             Monitor.RegisterAddClient(Id);
-            Client = new RebalanserClient();
+            Client = new RebalanserClient(zookeeperHosts, zooKeeperRootPath, sessionTimeout, connectTimeout, minRebalancingInterval, logger);
             Client.OnAssignment += (sender, args) =>
             {
                 Resources = args.Resources;
-                foreach(var resource in args.Resources)
+                foreach (var resource in args.Resources)
                     Monitor.ClaimResource(resource, Id);
 
                 if (this.onStartTime > TimeSpan.Zero)
@@ -103,7 +123,7 @@ namespace Rebalanser.ZooKeeper.Tests.RandomisedTests.TestComponents
                     Monitor.ReleaseResource(resource, Id);
 
                 Resources.Clear();
-                
+
                 if (this.onStopTime > TimeSpan.Zero)
                 {
                     if (randomiseTimes)

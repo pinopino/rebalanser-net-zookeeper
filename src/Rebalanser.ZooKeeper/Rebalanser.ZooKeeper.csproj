@@ -15,7 +15,6 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="Rebalanser.Core" Version="0.3.1" />
       <PackageReference Include="ZooKeeperNetEx" Version="3.4.12" />
     </ItemGroup>
 

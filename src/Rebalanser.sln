@@ -1,8 +1,11 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rebalanser.ZooKeeper", "Rebalanser.ZooKeeper\Rebalanser.ZooKeeper.csproj", "{CA10AEF2-704D-4087-80AA-D4DBBEFEF09F}"
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30204.135
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rebalanser.ZooKeeper", "Rebalanser.ZooKeeper\Rebalanser.ZooKeeper.csproj", "{CA10AEF2-704D-4087-80AA-D4DBBEFEF09F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rebalanser.ZooKeeper.Tests", "Rebalanser.ZooKeeper.Tests\Rebalanser.ZooKeeper.Tests.csproj", "{802C1E82-83F9-48C4-91C9-1C296C11BDED}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rebalanser.ZooKeeper.Tests", "Rebalanser.ZooKeeper.Tests\Rebalanser.ZooKeeper.Tests.csproj", "{802C1E82-83F9-48C4-91C9-1C296C11BDED}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -18,5 +21,11 @@ Global
 		{802C1E82-83F9-48C4-91C9-1C296C11BDED}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{802C1E82-83F9-48C4-91C9-1C296C11BDED}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{802C1E82-83F9-48C4-91C9-1C296C11BDED}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {15B11BD1-6925-439B-BECD-AE74020D6C99}
 	EndGlobalSection
 EndGlobal

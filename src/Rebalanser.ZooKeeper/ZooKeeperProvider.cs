@@ -1,26 +1,22 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using org.apache.zookeeper;
 using Rebalanser.Core;
 using Rebalanser.Core.Logging;
 using Rebalanser.ZooKeeper.ResourceManagement;
 using Rebalanser.ZooKeeper.Zk;
-using GB = Rebalanser.ZooKeeper.GlobalBarrier;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using RB = Rebalanser.ZooKeeper.ResourceBarrier;
 
 namespace Rebalanser.ZooKeeper
 {
-    public class ZooKeeperProvider : IRebalanserProvider
+    public class ZooKeeperProvider
     {
         // services
         private ILogger logger;
-        private IZooKeeperService zooKeeperService;
+        private ZooKeeperService zooKeeperService;
         private ResourceManager resourceManager;
 
         // non-mutable state
-        private readonly RebalancingMode rebalancingMode;
         private readonly string zooKeeperRootPath;
         private readonly TimeSpan minimumRebalancingInterval;
         private string resourceGroup;
@@ -29,7 +25,7 @@ namespace Rebalanser.ZooKeeper
         private TimeSpan onStartDelay;
         private object startLockObj = new object();
         private Random rand;
-        
+
         // mutable state
         private string clientId;
         private string clientPath;
@@ -43,21 +39,19 @@ namespace Rebalanser.ZooKeeper
 
         public ZooKeeperProvider(string zookeeperHosts,
             string zooKeeperRootPath,
-            TimeSpan sessionTimeout, 
+            TimeSpan sessionTimeout,
             TimeSpan connectTimeout,
             TimeSpan minimumRebalancingInterval,
-            RebalancingMode rebalancingMode,
             ILogger logger,
-            IZooKeeperService zooKeeperService=null)
+            ZooKeeperService zooKeeperService = null)
         {
             this.zooKeeperRootPath = zooKeeperRootPath;
-            this.rebalancingMode = rebalancingMode;
             this.logger = logger;
             this.sessionTimeout = sessionTimeout;
             this.connectTimeout = connectTimeout;
             this.minimumRebalancingInterval = minimumRebalancingInterval;
             this.rand = new Random(Guid.NewGuid().GetHashCode());
-            
+
             if (zooKeeperService == null)
                 this.zooKeeperService = new ZooKeeperService(zookeeperHosts);
             else
@@ -77,8 +71,8 @@ namespace Rebalanser.ZooKeeper
 
                 this.started = true;
             }
-            
-            this.resourceManager = new ResourceManager(this.zooKeeperService, this.logger, onChangeActions, this.rebalancingMode);
+
+            this.resourceManager = new ResourceManager(this.zooKeeperService, this.logger, onChangeActions);
             SetStateToNoSession();
             this.resourceGroup = resourceGroup;
             this.onStartDelay = clientOptions.OnAssignmentDelay;
@@ -93,7 +87,7 @@ namespace Rebalanser.ZooKeeper
             {
                 if (token.IsCancellationRequested)
                     await TerminateAsync("cancellation", false);
-                
+
                 try
                 {
                     switch (this.state)
@@ -257,18 +251,18 @@ namespace Rebalanser.ZooKeeper
                 return ClientState.NotStarted;
             }
         }
-        
+
         private ClientState GetState(AssignmentStatus assignmentState)
         {
             switch (assignmentState)
             {
-                case AssignmentStatus.ResourcesAssigned: 
+                case AssignmentStatus.ResourcesAssigned:
                 case AssignmentStatus.NoResourcesAssigned: return ClientState.Assigned;
                 case AssignmentStatus.NoAssignmentYet: return ClientState.PendingAssignment;
                 default: return ClientState.PendingAssignment;
             }
         }
-        
+
         private void ResetMutableState()
         {
             this.clientId = string.Empty;
@@ -278,10 +272,10 @@ namespace Rebalanser.ZooKeeper
             this.epoch = 0;
         }
 
-        private async Task EvaluateTerminationAsync(CancellationToken token, 
+        private async Task EvaluateTerminationAsync(CancellationToken token,
             ClientOptions clientOptions,
             string message,
-            Exception e=null)
+            Exception e = null)
         {
             if (token.IsCancellationRequested)
             {
@@ -290,7 +284,7 @@ namespace Rebalanser.ZooKeeper
             else if (clientOptions.AutoRecoveryOnError)
             {
                 SetStateToNoSession();
-                if(e != null)
+                if (e != null)
                     logger.Error(this.clientId, $"Error: {message} - {e} Auto-recovery enabled. Will restart in {clientOptions.RestartDelay.TotalMilliseconds}ms.");
                 else
                     logger.Error(this.clientId, $"Error: {message} Auto-recovery enabled. Will restart in {clientOptions.RestartDelay.TotalMilliseconds}ms.");
@@ -313,7 +307,7 @@ namespace Rebalanser.ZooKeeper
             var randomWait = this.rand.Next(2000);
             this.logger.Info(this.clientId, $"Will try to open a new session in {randomWait}ms");
             await Task.Delay(randomWait);
-            
+
             // blocks until the session starts or timesout
             var connected = await this.zooKeeperService.StartSessionAsync(this.sessionTimeout, this.connectTimeout, token);
             if (!connected)
@@ -326,23 +320,10 @@ namespace Rebalanser.ZooKeeper
 
             try
             {
-                switch (this.rebalancingMode)
-                {
-                    case RebalancingMode.GlobalBarrier:
-                        await this.zooKeeperService.InitializeGlobalBarrierAsync(
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/clients",
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/status",
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/stopped",
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/resources",
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/epoch");
-                        break;
-                    case RebalancingMode.ResourceBarrier:
-                        await this.zooKeeperService.InitializeResourceBarrierAsync(
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/clients",
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/resources",
-                            $"{this.zooKeeperRootPath}/{this.resourceGroup}/epoch");
-                        break;
-                }
+                await this.zooKeeperService.InitializeResourceBarrierAsync(
+                    $"{this.zooKeeperRootPath}/{this.resourceGroup}/clients",
+                    $"{this.zooKeeperRootPath}/{this.resourceGroup}/resources",
+                    $"{this.zooKeeperRootPath}/{this.resourceGroup}/epoch");
             }
             catch (ZkInvalidOperationException e)
             {
@@ -361,7 +342,7 @@ namespace Rebalanser.ZooKeeper
 
             return NewSessionResult.Established;
         }
-        
+
         private async Task<bool> CreateClientNodeAsync()
         {
             try
@@ -377,11 +358,11 @@ namespace Rebalanser.ZooKeeper
                 return false;
             }
         }
-        
+
         private void SetIdFromPath()
         {
             this.clientNumber = int.Parse(this.clientPath.Substring(this.clientPath.Length - 10, 10));
-            this.clientId = this.clientPath.Substring(this.clientPath.LastIndexOf("/", StringComparison.Ordinal)+1);
+            this.clientId = this.clientPath.Substring(this.clientPath.LastIndexOf("/", StringComparison.Ordinal) + 1);
         }
 
         private async Task<bool> CacheEpochLocallyAsync()
@@ -397,12 +378,12 @@ namespace Rebalanser.ZooKeeper
                 return false;
             }
         }
-        
+
         private async Task<(ElectionResult, string)> DetermineLeadershipAsync()
         {
             this.logger.Info(this.clientId, $"Looking for a next smaller sibling to watch");
             var (success, lowerSiblingPath) = await FindLowerSiblingAsync();
-            if(success)
+            if (success)
             {
                 if (lowerSiblingPath == string.Empty)
                     return (ElectionResult.IsLeader, string.Empty);
@@ -414,7 +395,7 @@ namespace Rebalanser.ZooKeeper
                 return (ElectionResult.Error, string.Empty);
             }
         }
-        
+
         private async Task<(bool, string)> FindLowerSiblingAsync()
         {
             try
@@ -447,53 +428,28 @@ namespace Rebalanser.ZooKeeper
         private async Task<CoordinatorExitReason> BecomeCoordinatorAsync(CancellationToken token)
         {
             this.logger.Info(this.clientId, $"Becoming coordinator");
-            ICoordinator coordinator;
-            switch (this.rebalancingMode)
-            {
-                case RebalancingMode.GlobalBarrier:
-                    coordinator = new GB.Coordinator(this.zooKeeperService,
-                        this.logger,
-                        this.resourceManager,
-                        this.clientId,
-                        this.minimumRebalancingInterval,
-                        TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds/3),
-                        this.onStartDelay,
-                        token);
-                    break;
-                case RebalancingMode.ResourceBarrier:
-                    coordinator = new RB.Coordinator(this.zooKeeperService,
-                        this.logger,
-                        this.resourceManager,
-                        this.clientId,
-                        this.minimumRebalancingInterval,
-                        TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds/3),
-                        this.onStartDelay,
-                        token);
-                    break;
-                default:
-                    coordinator = new RB.Coordinator(this.zooKeeperService,
-                        this.logger,
-                        this.resourceManager,
-                        this.clientId,
-                        this.minimumRebalancingInterval,
-                        TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds/3),
-                        this.onStartDelay,
-                        token);
-                    break;
-            }
-            
+
+            var coordinator = new RB.Coordinator(this.zooKeeperService,
+                this.logger,
+                this.resourceManager,
+                this.clientId,
+                this.minimumRebalancingInterval,
+                TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds / 3),
+                this.onStartDelay,
+                token);
+
             var hasBecome = await coordinator.BecomeCoordinatorAsync(this.epoch);
             switch (hasBecome)
             {
                 case BecomeCoordinatorResult.Ok:
                     this.logger.Info(this.clientId, $"Have successfully become the coordinator");
-                    
+
                     // this blocks until coordinator terminates (due to failure, session expiry or detects it is a zombie)
                     var coordinatorExitReason = await coordinator.StartEventLoopAsync();
                     this.logger.Info(this.clientId, $"The coordinator has exited for reason {coordinatorExitReason}");
                     return coordinatorExitReason;
                 case BecomeCoordinatorResult.StaleEpoch:
-                    this.logger.Info(this.clientId, 
+                    this.logger.Info(this.clientId,
                         "Since being elected, the epoch has been incremented suggesting another leader. Aborting coordinator role to check leadership again");
                     return CoordinatorExitReason.NoLongerCoordinator;
                 default:
@@ -501,55 +457,27 @@ namespace Rebalanser.ZooKeeper
                     return CoordinatorExitReason.PotentialInconsistentState;
             }
         }
-        
+
         private async Task<FollowerExitReason> BecomeFollowerAsync(CancellationToken token)
         {
             this.logger.Info(this.clientId, $"Becoming a follower");
 
-            IFollower follower;
-            switch (this.rebalancingMode)
-            {
-                case RebalancingMode.GlobalBarrier:
-                    follower = new GB.Follower(this.zooKeeperService,
-                        this.logger,
-                        this.resourceManager,
-                        this.clientId,
-                        this.clientNumber,
-                        this.watchSiblingNodePath,
-                        TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds/3),
-                        this.onStartDelay,
-                        token);
-                    break;
-                case RebalancingMode.ResourceBarrier:
-                    follower = new RB.Follower(this.zooKeeperService,
-                        this.logger,
-                        this.resourceManager,
-                        this.clientId,
-                        this.clientNumber,
-                        this.watchSiblingNodePath,
-                        TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds/3),
-                        this.onStartDelay,
-                        token);
-                    break;
-                default:
-                    follower = new RB.Follower(this.zooKeeperService,
-                        this.logger,
-                        this.resourceManager,
-                        this.clientId,
-                        this.clientNumber,
-                        this.watchSiblingNodePath,
-                        TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds/3),
-                        this.onStartDelay,
-                        token);
-                    break;
-            }
+            var follower = new RB.Follower(this.zooKeeperService,
+                 this.logger,
+                 this.resourceManager,
+                 this.clientId,
+                 this.clientNumber,
+                 this.watchSiblingNodePath,
+                 TimeSpan.FromMilliseconds((int)this.sessionTimeout.TotalMilliseconds / 3),
+                 this.onStartDelay,
+                 token);
 
             var hasBecome = await follower.BecomeFollowerAsync();
-            switch(hasBecome)
+            switch (hasBecome)
             {
                 case BecomeFollowerResult.Ok:
                     this.logger.Info(this.clientId, $"Have become a follower, starting follower event loop");
-                
+
                     // blocks until follower either fails, the session expires or the follower detects it might be the new leader
                     var followerExitReason = await follower.StartEventLoopAsync();
                     this.logger.Info(this.clientId, $"The follower has exited for reason {followerExitReason}");
@@ -563,27 +491,27 @@ namespace Rebalanser.ZooKeeper
             }
         }
 
-        private async Task TerminateAsync(string terminationReason, bool aborted, Exception abortException=null)
+        private async Task TerminateAsync(string terminationReason, bool aborted, Exception abortException = null)
         {
             try
             {
                 this.state = ClientInternalState.Terminated;
                 if (aborted)
                 {
-                    if(abortException != null)
+                    if (abortException != null)
                         logger.Error(this.clientId, $"Client aborting due: {terminationReason}. Exception: {abortException}");
                     else
                         logger.Error(this.clientId, $"Client aborting due: {terminationReason}");
                 }
                 else
                     logger.Info(this.clientId, $"Client terminating due: {terminationReason}");
-                
+
                 await this.zooKeeperService.CloseSessionAsync();
                 await this.resourceManager.InvokeOnStopActionsAsync(this.clientId, "No role");
 
                 if (aborted)
                     await this.resourceManager.InvokeOnAbortActionsAsync(this.clientId, $"The client has aborted due to: {terminationReason}", abortException);
-                
+
                 logger.Info(this.clientId, "Client terminated");
             }
             catch (TerminateClientException e)
@@ -592,7 +520,7 @@ namespace Rebalanser.ZooKeeper
             }
             finally
             {
-                if(aborted)
+                if (aborted)
                     this.aborted = true;
                 this.started = false;
             }
@@ -600,7 +528,7 @@ namespace Rebalanser.ZooKeeper
 
         private async Task WaitRandomTime(TimeSpan maxWait)
         {
-            await Task.Delay(this.rand.Next((int) maxWait.TotalMilliseconds));
+            await Task.Delay(this.rand.Next((int)maxWait.TotalMilliseconds));
         }
     }
 }
