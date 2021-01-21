@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.30204.135
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rebalanser.ZooKeeper", "Rebalanser.ZooKeeper\Rebalanser.ZooKeeper.csproj", "{CA10AEF2-704D-4087-80AA-D4DBBEFEF09F}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rebalanser", "Rebalanser\Rebalanser.csproj", "{CA10AEF2-704D-4087-80AA-D4DBBEFEF09F}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rebalanser.ZooKeeper.Tests", "Rebalanser.ZooKeeper.Tests\Rebalanser.ZooKeeper.Tests.csproj", "{802C1E82-83F9-48C4-91C9-1C296C11BDED}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rebalanser.Tests", "Rebalanser.Tests\Rebalanser.Tests.csproj", "{802C1E82-83F9-48C4-91C9-1C296C11BDED}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
